@@ -1,0 +1,24 @@
+{
+  "datasource": "farmia",
+  "dataset": "shipments",
+  "description": "Envios de proveedores y logistica. CSV con cabecera y esquema declarado: un CSV no lleva tipos, asi que sin esquema Spark los adivinaria distinto en cada fichero.",
+  "enabled": true,
+
+  "source": {
+    "type": "files",
+    "format": "csv",
+    "path": "{landing}/farmia/shipments",
+    "schema": "shipment_id STRING, supplier_id STRING, carrier STRING, warehouse_id STRING, sku STRING, units INT, dispatch_ts TIMESTAMP, delivered_ts TIMESTAMP, transit_hours DOUBLE, status STRING",
+    "options": {
+      "header": "true"
+    }
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "derived_partitions": {
+      "_ingested_date": "to_date(_ingested_at)"
+    },
+    "partition_by": ["_ingested_date"]
+  }
+}

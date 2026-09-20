@@ -1,0 +1,20 @@
+{
+  "datasource": "farmia",
+  "dataset": "sensors_stream",
+  "description": "Lecturas de sensores de campo en tiempo real. Un topic por zona, consumidos con patron: al dar de alta una zona nueva no hay que tocar la configuracion.",
+  "enabled": true,
+
+  "source": {
+    "type": "kafka",
+    "subscribe_pattern": "farmia\\.sensors\\..*",
+    "starting_offsets": "earliest",
+    "key_format": "string",
+    "value_format": "avro",
+    "value_subject": "farmia.sensors.norte-value"
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "partition_by": ["_topic"]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "datasource": "farmia",
+  "dataset": "field_images",
+  "description": "Fotografias de los cultivos. Se ingieren con binaryFile: bronze guarda los bytes y la ruta, y el analisis de imagen se hace despues sobre esta tabla.",
+  "enabled": true,
+
+  "source": {
+    "type": "files",
+    "format": "binaryFile",
+    "path": "{landing}/farmia/field_images",
+    "options": {
+      "pathGlobFilter": "*.png",
+      "recursiveFileLookup": "true"
+    }
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "derived_partitions": {
+      "_ingested_date": "to_date(_ingested_at)"
+    },
+    "partition_by": ["_ingested_date"]
+  }
+}

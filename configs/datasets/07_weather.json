@@ -1,0 +1,17 @@
+{
+  "datasource": "farmia",
+  "dataset": "weather",
+  "description": "Observaciones meteorologicas del proveedor externo, en ficheros Avro. El Avro de fichero ya lleva su esquema dentro, por eso no se declara aqui.",
+  "enabled": true,
+
+  "source": {
+    "type": "files",
+    "format": "avro",
+    "path": "{landing}/farmia/weather"
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "partition_by": ["station_id"]
+  }
+}

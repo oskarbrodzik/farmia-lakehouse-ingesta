@@ -1,0 +1,23 @@
+{
+  "datasource": "farmia",
+  "dataset": "app_events_stream",
+  "description": "Eventos de la app movil en tiempo real. Mensajes JSON con esquema declarado: un topic JSON no tiene contrato, asi que el esquema lo fija la configuracion.",
+  "enabled": true,
+
+  "source": {
+    "type": "kafka",
+    "subscribe": "farmia.app_events",
+    "starting_offsets": "earliest",
+    "key_format": "string",
+    "value_format": "json",
+    "value_json_schema": "event_id STRING, event_ts TIMESTAMP, session_id STRING, customer_id STRING, event_type STRING, product_id STRING, channel STRING"
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "derived_partitions": {
+      "_ingested_date": "to_date(_ingested_at)"
+    },
+    "partition_by": ["_ingested_date"]
+  }
+}

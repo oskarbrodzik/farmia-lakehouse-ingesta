@@ -1,0 +1,21 @@
+{
+  "datasource": "farmia",
+  "dataset": "product_catalog",
+  "description": "Catalogo de productos del sistema de gestion local. Parquet, carga completa.",
+  "enabled": true,
+
+  "source": {
+    "type": "files",
+    "format": "parquet",
+    "path": "{landing}/farmia/product_catalog",
+    "schema_evolution_mode": "addNewColumns"
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "derived_partitions": {
+      "_ingested_date": "to_date(_ingested_at)"
+    },
+    "partition_by": ["_ingested_date"]
+  }
+}

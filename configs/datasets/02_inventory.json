@@ -1,0 +1,17 @@
+{
+  "datasource": "farmia",
+  "dataset": "inventory",
+  "description": "Snapshots diarios de inventario por almacen. Parquet. Se particiona por almacen porque las consultas de silver filtran siempre por el.",
+  "enabled": true,
+
+  "source": {
+    "type": "files",
+    "format": "parquet",
+    "path": "{landing}/farmia/inventory"
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "partition_by": ["warehouse_id"]
+  }
+}

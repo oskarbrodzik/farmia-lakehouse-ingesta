@@ -1,0 +1,28 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Datos: no se versionan, se descargan del origen
+landing/
+*.csv.gz
+*.json.gz
+*.zip
+spark-warehouse/
+
+# Editores
+.idea/
+.vscode/
+*.swp
+
+# Sistema
+.DS_Store
+Thumbs.db

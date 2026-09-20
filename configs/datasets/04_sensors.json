@@ -1,0 +1,21 @@
+{
+  "datasource": "farmia",
+  "dataset": "sensors",
+  "description": "Lecturas de los sensores de campo que llegan en fichero. Esquema inferido con hints, para admitir sensores nuevos sin tocar la configuracion.",
+  "enabled": true,
+
+  "source": {
+    "type": "files",
+    "format": "json",
+    "path": "{landing}/farmia/sensors",
+    "options": {
+      "cloudFiles.inferColumnTypes": "true",
+      "cloudFiles.schemaHints": "event_ts timestamp, temperature_c double, soil_moisture_pct double, ph_level double"
+    }
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "partition_by": ["field_id"]
+  }
+}

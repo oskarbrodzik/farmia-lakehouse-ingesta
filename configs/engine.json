@@ -1,0 +1,16 @@
+{
+  "storage_account": "masterob001sta",
+  "landing_container": "landing",
+  "lakehouse_container": "lakehouse",
+
+  "catalog": "masterob001dbw",
+  "bronze_schema": "farmia_bronze",
+  "ops_schema": "farmia_ops",
+  "audit_table": "ingestion_audit",
+
+  "register_tables": true,
+
+  "kafka": {
+    "client_properties_path": "/Workspace/Users/<usuario>/farmia-secrets/client.properties"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "datasource": "farmia",
+  "dataset": "app_events",
+  "description": "Eventos de la aplicacion movil en fichero. Volumen alto y consultas por fecha, asi que se particiona por dia de ingesta.",
+  "enabled": true,
+
+  "source": {
+    "type": "files",
+    "format": "json",
+    "path": "{landing}/farmia/app_events",
+    "options": {
+      "cloudFiles.inferColumnTypes": "true",
+      "cloudFiles.schemaHints": "event_ts timestamp"
+    }
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "derived_partitions": {
+      "_ingested_date": "to_date(_ingested_at)"
+    },
+    "partition_by": ["_ingested_date"]
+  }
+}

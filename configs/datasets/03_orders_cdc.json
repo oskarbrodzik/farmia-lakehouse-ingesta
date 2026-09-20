@@ -1,0 +1,21 @@
+{
+  "datasource": "farmia",
+  "dataset": "orders_cdc",
+  "description": "Cambios (CDC) de los pedidos de la tienda online. JSON con esquema declarado: es una fuente transaccional y no interesa que el tipo de una columna cambie entre ejecuciones.",
+  "enabled": true,
+
+  "source": {
+    "type": "files",
+    "format": "json",
+    "path": "{landing}/farmia/orders_cdc",
+    "schema": "order_id STRING, customer_id STRING, order_status STRING, sales_channel STRING, order_total_eur DOUBLE, item_count BIGINT, op_type STRING, op_ts TIMESTAMP, sequence_num BIGINT, is_deleted BOOLEAN"
+  },
+
+  "sink": {
+    "layer": "bronze",
+    "derived_partitions": {
+      "_ingested_date": "to_date(_ingested_at)"
+    },
+    "partition_by": ["_ingested_date"]
+  }
+}
