@@ -1,148 +1,150 @@
-# Motor de ingesta FarmIA
+# FarmIA ingestion engine
 
-Este motor lleva los datos de FarmIA desde la capa **landing** hasta la capa **bronze** de un lakehouse en Azure Databricks.
+*[Versión en español](README.es.md)*
 
-Lee ficheros por lotes con Databricks Autoloader (CSV, JSON, Parquet, Avro e imágenes) y eventos desde Apache Kafka (JSON y Avro con Schema Registry). Todo lo que cambia de una fuente a otra vive en un fichero JSON, así que dar de alta una fuente nueva no toca el código.
+This engine moves FarmIA's data from the **landing** zone to the **bronze** layer of a lakehouse on Azure Databricks.
 
-El diseño de la arquitectura está en [`docs/arquitectura.md`](docs/arquitectura.md).
+It reads files in batch with Databricks Autoloader (CSV, JSON, Parquet, Avro and images) and events from Apache Kafka (JSON and Avro with Schema Registry). Everything that changes from one source to another lives in a JSON file, so onboarding a new source never touches the code.
 
----
-
-## Índice
-
-1. [Estructura del proyecto](#1-estructura-del-proyecto)
-2. [Requisitos previos](#2-requisitos-previos)
-3. [Despliegue](#3-despliegue)
-4. [Configuración](#4-configuración)
-5. [Ejecución](#5-ejecución)
-6. [Ejemplo de ejecución](#6-ejemplo-de-ejecución)
-7. [Preparación de los datos de prueba](#7-preparación-de-los-datos-de-prueba)
-8. [Decisiones técnicas](#8-decisiones-técnicas)
+The architecture design is in [`docs/arquitectura.md`](docs/arquitectura.md) (Spanish).
 
 ---
 
-## 1. Estructura del proyecto
+## Table of contents
+
+1. [Project structure](#1-project-structure)
+2. [Prerequisites](#2-prerequisites)
+3. [Deployment](#3-deployment)
+4. [Configuration](#4-configuration)
+5. [Running the engine](#5-running-the-engine)
+6. [Example run](#6-example-run)
+7. [Test data](#7-test-data)
+8. [Design decisions](#8-design-decisions)
+
+---
+
+## 1. Project structure
 
 ```
-tarea-lakehouse/
+farmia-lakehouse-ingesta/
 ├── configs/
-│   ├── engine.json              Ajustes comunes: cuenta, catálogo, Kafka
-│   └── datasets/                Un fichero por dataset (10 en total)
+│   ├── engine.json              Shared settings: account, catalog, Kafka
+│   └── datasets/                One file per dataset (10 in total)
 │       ├── 01_product_catalog.json
 │       ├── ...
 │       └── 10_sensors_stream.json
 ├── src/farmia_ingest/
-│   ├── __init__.py              API pública del paquete
-│   ├── config.py                Carga y validación de la configuración
-│   ├── readers.py               Lectores: Autoloader y Kafka
-│   ├── writers.py               Escritura Delta en bronze
-│   ├── engine.py                Orquestación, errores y auditoría
-│   └── logging_utils.py         Configuración de logs
+│   ├── __init__.py              Public API
+│   ├── config.py                Loads and validates configuration
+│   ├── readers.py               Readers: Autoloader and Kafka
+│   ├── writers.py               Delta writes into bronze
+│   ├── engine.py                Orchestration, error handling, audit
+│   └── logging_utils.py         Logging setup
 ├── notebooks/
-│   ├── 00_setup_y_datasets_farmia.py   Catálogo, esquemas y datasets base
-│   ├── 01_datasets_extra_formatos.py   CSV, Avro e imágenes
-│   ├── 02_liberar_incrementales.py     Simula la llegada de ficheros nuevos
-│   ├── 03_kafka_producer.py            Produce eventos a los topics
-│   └── run_engine.py                   Lanzador del motor
+│   ├── 00_setup_y_datasets_farmia.py   Catalog, schemas and base datasets
+│   ├── 01_datasets_extra_formatos.py   CSV, Avro and images
+│   ├── 02_liberar_incrementales.py     Simulates new files arriving
+│   ├── 03_kafka_producer.py            Produces events to the topics
+│   └── run_engine.py                   Engine launcher
 └── docs/
-    ├── arquitectura.md          Diseño del lakehouse
+    ├── arquitectura.md          Lakehouse design
     ├── diagrama-arquitectura.png
-    └── capturas/                Evidencias de ejecución
+    └── capturas/                Execution evidence
 ```
 
-El paquete `farmia_ingest` es el núcleo del proyecto. Los notebooks `00` a `03` son material de apoyo para generar datos de prueba. `run_engine` es el lanzador y no contiene lógica.
+The `farmia_ingest` package is the core of the project. Notebooks `00` to `03` are supporting material that generates test data. `run_engine` is the launcher and holds no logic.
 
-### Responsabilidad de cada módulo
+### What each module does
 
-| Módulo | Qué hace |
+| Module | Responsibility |
 |---|---|
-| `config.py` | Convierte los JSON en objetos validados. Falla al cargar, no a mitad de ejecución |
-| `readers.py` | Devuelve un DataFrame de streaming, venga de ficheros o de Kafka |
-| `writers.py` | Escribe en Delta con particionado y registra la tabla en el catálogo |
-| `engine.py` | Lanza las consultas, captura errores por dataset y escribe la auditoría |
-| `logging_utils.py` | Un único formato de log para todos los módulos |
+| `config.py` | Turns the JSON files into validated objects. Fails on load, not halfway through a run |
+| `readers.py` | Returns a streaming DataFrame, whether it comes from files or from Kafka |
+| `writers.py` | Writes Delta with partitioning and registers the table in the catalog |
+| `engine.py` | Starts the queries, captures per-dataset errors and writes the audit record |
+| `logging_utils.py` | A single log format across every module |
 
-## 2. Requisitos previos
+## 2. Prerequisites
 
-**En Azure:**
+**On Azure:**
 
-- Cuenta de almacenamiento **ADLS Gen2** con espacio de nombres jerárquico activado y dos contenedores: `landing` y `lakehouse`.
-- Workspace de **Azure Databricks** con Unity Catalog habilitado.
-- **Access Connector for Azure Databricks** con el rol *Storage Blob Data Contributor* sobre la cuenta de almacenamiento.
+- An **ADLS Gen2** storage account with hierarchical namespace enabled and two containers: `landing` and `lakehouse`.
+- An **Azure Databricks** workspace with Unity Catalog enabled.
+- An **Access Connector for Azure Databricks** granted the *Storage Blob Data Contributor* role on the storage account.
 
-**En Unity Catalog:**
+**In Unity Catalog:**
 
-- Una *storage credential* que apunte al Access Connector.
-- Dos *external locations* sobre los contenedores: `landing_loc` y `lakehouse_loc`.
-- Un catálogo con cuatro esquemas: `farmia_bronze`, `farmia_silver`, `farmia_gold` y `farmia_ops`.
+- A storage credential pointing at the Access Connector.
+- Two external locations over the containers: `landing_loc` and `lakehouse_loc`.
+- A catalog with four schemas: `farmia_bronze`, `farmia_silver`, `farmia_gold` and `farmia_ops`.
 
-**Para la ingesta de eventos:**
+**For event ingestion:**
 
-- Un cluster de **Kafka** accesible. Este trabajo usa Confluent Cloud.
-- **Schema Registry** con una API key propia. Importante: una key de ámbito *Global* no sirve para el Schema Registry, hay que crearla con ámbito *Schema Registry*.
+- A reachable **Kafka** cluster. This project uses Confluent Cloud.
+- A **Schema Registry** with its own API key. Note: a key scoped as *Global* does not work against the Schema Registry, it has to be created with the *Schema Registry* scope.
 
-**Cómputo:**
+**Compute:**
 
-Funciona en cómputo **serverless**, que es lo que se usó aquí. También en un cluster clásico con Databricks Runtime 13.3 o superior.
+Runs on **serverless** compute, which is what was used here. It also runs on a classic cluster with Databricks Runtime 13.3 or later.
 
-## 3. Despliegue
+## 3. Deployment
 
-Partiendo de cero, el orden es:
+Starting from scratch, the order is:
 
-1. Subir el proyecto al workspace (3.1).
-2. Dejar el `client.properties` fuera del proyecto y apuntarlo desde `engine.json` (3.2), solo si vas a usar Kafka.
-3. Ejecutar los notebooks `00` y `01` para crear los esquemas y generar datos en landing (sección 7).
-4. Crear los topics y ejecutar el notebook `03`, si vas a usar Kafka (sección 7).
-5. Lanzar `run_engine` (sección 5).
+1. Upload the project to the workspace (3.1).
+2. Place `client.properties` outside the project and point `engine.json` at it (3.2), only if you are using Kafka.
+3. Run notebooks `00` and `01` to create the schemas and generate data in landing (section 7).
+4. Create the topics and run notebook `03`, if you are using Kafka (section 7).
+5. Launch `run_engine` (section 5).
 
-### 3.1 Subir el proyecto al workspace
+### 3.1 Upload the project to the workspace
 
-Con la [CLI de Databricks](https://docs.databricks.com/dev-tools/cli/index.html) autenticada:
+With the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/index.html) authenticated:
 
 ```bash
-databricks sync ./tarea-lakehouse /Users/<usuario>/tarea-lakehouse \
+databricks sync ./farmia-lakehouse-ingesta /Users/<user>/farmia-lakehouse-ingesta \
   --exclude "**/__pycache__/**"
 ```
 
-Usa `sync` y no `workspace import-dir`: este último convierte los ficheros `.py` en notebooks, y entonces el paquete deja de poder importarse.
+Use `sync` rather than `workspace import-dir`: the latter turns `.py` files into notebooks, which breaks the package imports.
 
-También vale copiar los ficheros a mano desde la interfaz (*Workspace → Create → File*), respetando la estructura de carpetas.
+Copying the files by hand through the UI (*Workspace → Create → File*) also works, as long as the folder structure is preserved.
 
-### 3.2 Credenciales de Kafka
+### 3.2 Kafka credentials
 
-El motor lee la conexión a Kafka de un fichero `client.properties` con el formato que descarga Confluent Cloud:
+The engine reads the Kafka connection from a `client.properties` file in the format Confluent Cloud hands out:
 
 ```properties
 bootstrap.servers=pkc-xxxxx.region.azure.confluent.cloud:9092
 security.protocol=SASL_SSL
 sasl.mechanisms=PLAIN
-sasl.username=<api key del cluster>
-sasl.password=<api secret del cluster>
+sasl.username=<cluster api key>
+sasl.password=<cluster api secret>
 
 schema.registry.url=https://psrc-xxxxx.region.azure.confluent.cloud
 basic.auth.credentials.source=USER_INFO
-basic.auth.user.info=<api key del registry>:<api secret del registry>
+basic.auth.user.info=<registry api key>:<registry api secret>
 ```
 
-**Este fichero debe vivir fuera del proyecto.** En esta implementación está en `/Workspace/Users/<usuario>/farmia-secrets/client.properties`, y `engine.json` solo guarda su ruta. Así no hay credenciales en el código ni en el repositorio.
+**This file must live outside the project.** In this implementation it sits at `/Workspace/Users/<user>/farmia-secrets/client.properties`, and `engine.json` only stores its path, so no credentials end up in the code or in the repository.
 
-En un entorno de producción lo correcto sería usar *secret scopes* de Databricks en lugar de un fichero.
+In production the right answer would be Databricks secret scopes rather than a file.
 
-### 3.3 Dependencias
+### 3.3 Dependencies
 
-Solo se necesita una librería externa, y únicamente si hay datasets en Avro:
+Only one external library is needed, and only when there are Avro datasets:
 
 ```python
 %pip install "confluent-kafka[avro,schemaregistry]"
 ```
 
-Los extras no son opcionales: el cliente del Schema Registry necesita `authlib` y `fastavro`, que no vienen en la instalación básica.
+The extras are not optional: the Schema Registry client needs `authlib` and `fastavro`, which the base install does not bring.
 
-## 4. Configuración
+## 4. Configuration
 
 ### 4.1 `engine.json`
 
-Ajustes comunes a todas las ingestas:
+Settings shared by every ingestion:
 
 ```json
 {
@@ -158,34 +160,34 @@ Ajustes comunes a todas las ingestas:
   "register_tables": true,
 
   "kafka": {
-    "client_properties_path": "/Workspace/Users/<usuario>/farmia-secrets/client.properties"
+    "client_properties_path": "/Workspace/Users/<user>/farmia-secrets/client.properties"
   }
 }
 ```
 
-| Campo | Obligatorio | Descripción |
+| Field | Required | Description |
 |---|---|---|
-| `storage_account` | Sí | Cuenta de ADLS Gen2 |
-| `landing_container` | No (`landing`) | Contenedor de la zona de aterrizaje |
-| `lakehouse_container` | No (`lakehouse`) | Contenedor del lakehouse |
-| `catalog` | Sí | Catálogo de Unity Catalog |
-| `bronze_schema` | No (`farmia_bronze`) | Esquema donde se registran las tablas |
-| `ops_schema` | No (`farmia_ops`) | Esquema de la tabla de auditoría |
-| `audit_table` | No (`ingestion_audit`) | Nombre de la tabla de auditoría |
-| `register_tables` | No (`true`) | Si se registran las tablas en el catálogo |
-| `kafka` | No | Solo si hay datasets de tipo `kafka` |
+| `storage_account` | Yes | ADLS Gen2 account |
+| `landing_container` | No (`landing`) | Landing zone container |
+| `lakehouse_container` | No (`lakehouse`) | Lakehouse container |
+| `catalog` | Yes | Unity Catalog catalog |
+| `bronze_schema` | No (`farmia_bronze`) | Schema where tables are registered |
+| `ops_schema` | No (`farmia_ops`) | Schema holding the audit table |
+| `audit_table` | No (`ingestion_audit`) | Audit table name |
+| `register_tables` | No (`true`) | Whether tables get registered in the catalog |
+| `kafka` | No | Only needed when there are `kafka` datasets |
 
-### 4.2 Configuración de un dataset
+### 4.2 Dataset configuration
 
-Cada fichero de `configs/datasets/` describe una fuente. El nombre del fichero solo determina el orden de carga.
+Each file under `configs/datasets/` describes one source. The file name only determines load order.
 
-**Ingesta de ficheros:**
+**File ingestion:**
 
 ```json
 {
   "datasource": "farmia",
   "dataset": "shipments",
-  "description": "Envíos de proveedores y logística.",
+  "description": "Supplier and logistics shipments.",
   "enabled": true,
 
   "source": {
@@ -204,7 +206,7 @@ Cada fichero de `configs/datasets/` describe una fuente. El nombre del fichero s
 }
 ```
 
-**Ingesta de eventos:**
+**Event ingestion:**
 
 ```json
 {
@@ -228,175 +230,175 @@ Cada fichero de `configs/datasets/` describe una fuente. El nombre del fichero s
 }
 ```
 
-### 4.3 Referencia de campos
+### 4.3 Field reference
 
-**Comunes**
+**Common**
 
-| Campo | Obligatorio | Descripción |
+| Field | Required | Description |
 |---|---|---|
-| `datasource` | Sí | Agrupa datasets de un mismo origen. Forma parte de la ruta y del nombre de tabla |
-| `dataset` | Sí | Nombre del dataset |
-| `enabled` | No (`true`) | Permite desactivar un dataset sin borrar su fichero |
-| `description` | No | Documentación del propio fichero, el motor no la usa |
+| `datasource` | Yes | Groups datasets from the same origin. Part of the path and the table name |
+| `dataset` | Yes | Dataset name |
+| `enabled` | No (`true`) | Disables a dataset without deleting its file |
+| `description` | No | Documents the file itself, the engine does not read it |
 
-**`source` con `type: "files"`**
+**`source` with `type: "files"`**
 
-| Campo | Obligatorio | Descripción |
+| Field | Required | Description |
 |---|---|---|
-| `format` | Sí | `csv`, `json`, `parquet`, `avro` o `binaryFile` |
-| `path` | Sí | Ruta en landing. Admite `{landing}` y `{lakehouse}` |
-| `schema` | No | Esquema esperado en DDL. Si se declara, Autoloader no infiere |
-| `schema_evolution_mode` | No | `addNewColumns`, `rescue`, `failOnNewColumns` o `none`. Si se omite, el motor lo deduce |
-| `options` | No | Opciones adicionales de Autoloader, tal cual las espera Spark |
+| `format` | Yes | `csv`, `json`, `parquet`, `avro` or `binaryFile` |
+| `path` | Yes | Landing path. Accepts `{landing}` and `{lakehouse}` |
+| `schema` | No | Expected schema as DDL. When declared, Autoloader does not infer |
+| `schema_evolution_mode` | No | `addNewColumns`, `rescue`, `failOnNewColumns` or `none`. When omitted, the engine derives it |
+| `options` | No | Extra Autoloader options, exactly as Spark expects them |
 
-**`source` con `type: "kafka"`**
+**`source` with `type: "kafka"`**
 
-| Campo | Obligatorio | Descripción |
+| Field | Required | Description |
 |---|---|---|
-| `subscribe` | Uno de los dos | Topic concreto |
-| `subscribe_pattern` | Uno de los dos | Expresión regular de topics |
-| `value_format` | Sí | `json`, `avro`, `string` o `binary` |
-| `key_format` | No (`string`) | Mismo juego de valores |
-| `value_subject` | Si es Avro | Subject del Schema Registry. Con `subscribe_pattern` no se puede derivar de cada topic, así que se declara uno y vale para todos los del patrón, que comparten esquema |
-| `key_subject` | Si la clave es Avro | Subject de la clave |
-| `value_json_schema` | Si es JSON | Esquema DDL del mensaje |
-| `key_json_schema` | Si la clave es JSON | Esquema DDL de la clave |
-| `starting_offsets` | No (`earliest`) | `earliest`, `latest` o un JSON de offsets |
-| `options` | No | Opciones adicionales del conector de Kafka |
+| `subscribe` | One of the two | A specific topic |
+| `subscribe_pattern` | One of the two | Regular expression over topic names |
+| `value_format` | Yes | `json`, `avro`, `string` or `binary` |
+| `key_format` | No (`string`) | Same set of values |
+| `value_subject` | If Avro | Schema Registry subject. With `subscribe_pattern` it cannot be derived per topic, so one is declared and serves every topic in the pattern, which share a schema |
+| `key_subject` | If the key is Avro | Subject for the key |
+| `value_json_schema` | If JSON | DDL schema of the message |
+| `key_json_schema` | If the key is JSON | DDL schema of the key |
+| `starting_offsets` | No (`earliest`) | `earliest`, `latest` or an offsets JSON |
+| `options` | No | Extra options for the Kafka connector |
 
 **`sink`**
 
-| Campo | Obligatorio | Descripción |
+| Field | Required | Description |
 |---|---|---|
-| `layer` | No (`bronze`) | Única capa soportada en esta versión |
-| `path` | No | Ruta de destino. Si se omite: `{lakehouse}/bronze/{datasource}/{dataset}` |
-| `format` | No (`delta`) | Formato de escritura |
-| `partition_by` | No | Columnas de particionado |
-| `derived_partitions` | No | Columnas calculadas con SQL antes de escribir |
-| `trigger` | No | `{"processing_time": "30 seconds"}` para consulta continua. Por defecto `availableNow` |
-| `options` | No | Opciones adicionales del escritor |
+| `layer` | No (`bronze`) | The only layer this version writes to |
+| `path` | No | Target path. When omitted: `{lakehouse}/bronze/{datasource}/{dataset}` |
+| `format` | No (`delta`) | Write format |
+| `partition_by` | No | Partition columns |
+| `derived_partitions` | No | Columns computed with SQL before writing |
+| `trigger` | No | `{"processing_time": "30 seconds"}` for a continuous query. Defaults to `availableNow` |
+| `options` | No | Extra writer options |
 
-### 4.4 Columnas que añade el motor
+### 4.4 Columns the engine adds
 
-| Columna | Origen | Contenido |
+| Column | Source | Content |
 |---|---|---|
-| `_ingested_at` | Todos | Momento de la ingesta |
-| `_ingested_filename` | Ficheros | Nombre del fichero de origen |
-| `_ingested_filepath` | Ficheros | Ruta completa del fichero |
-| `_rescued_data` | Ficheros salvo `binaryFile` | Campos que no encajan con el esquema |
-| `_topic`, `_partition`, `_offset`, `_kafka_timestamp` | Kafka | Coordenadas del mensaje |
-| `key`, `value` | Kafka | Clave y contenido ya decodificados |
+| `_ingested_at` | All | Ingestion timestamp |
+| `_ingested_filename` | Files | Name of the source file |
+| `_ingested_filepath` | Files | Full path of the source file |
+| `_rescued_data` | Files except `binaryFile` | Fields that do not match the schema |
+| `_topic`, `_partition`, `_offset`, `_kafka_timestamp` | Kafka | Message coordinates |
+| `key`, `value` | Kafka | Key and payload, already decoded |
 
-## 5. Ejecución
+## 5. Running the engine
 
-### Desde el notebook
+### From the notebook
 
-Abrir `notebooks/run_engine` y ejecutarlo. El notebook localiza el paquete a partir de su propia ruta, carga las configuraciones y lanza el motor.
+Open `notebooks/run_engine` and run it. The notebook locates the package from its own path, loads the configuration and starts the engine.
 
-Para procesar solo algunos datasets, escribir sus nombres separados por comas en el widget `datasets` de la parte superior:
+To process only some datasets, type their names separated by commas in the `datasets` widget at the top:
 
 ```
 farmia.sensors_stream,farmia.weather
 ```
 
-### Desde código
+### From code
 
 ```python
 import sys
 
-PROYECTO = "/Workspace/Users/<usuario>/tarea-lakehouse"
-sys.path.insert(0, f"{PROYECTO}/src")
+PROJECT = "/Workspace/Users/<user>/farmia-lakehouse-ingesta"
+sys.path.insert(0, f"{PROJECT}/src")
 
 from farmia_ingest import EngineConfig, load_dataset_configs, ejecutar
 
-engine = EngineConfig.load(f"{PROYECTO}/configs/engine.json")
-datasets = load_dataset_configs(f"{PROYECTO}/configs/datasets")
+engine = EngineConfig.load(f"{PROJECT}/configs/engine.json")
+datasets = load_dataset_configs(f"{PROJECT}/configs/datasets")
 
-resultados = ejecutar(spark, engine, datasets)
+results = ejecutar(spark, engine, datasets)
 ```
 
-`ejecutar` devuelve una lista de `ResultadoIngesta` con las filas escritas, la duración y el estado de cada dataset.
+`ejecutar` returns a list of `ResultadoIngesta` with rows written, duration and status per dataset.
 
-### Programar la ejecución horaria
+### Scheduling an hourly run
 
-El motor está pensado para ejecutarse cada hora. En Databricks se consigue creando un *Job* que apunte a `run_engine` con una programación `0 0 * * * ?`. El widget `datasets` se puede pasar como parámetro del job.
+The engine is meant to run every hour. In Databricks that means a Job pointing at `run_engine` with a `0 0 * * * ?` schedule. The `datasets` widget can be passed as a job parameter.
 
-### Auditoría
+### Audit
 
-Cada ejecución escribe una fila por dataset en `<catálogo>.farmia_ops.ingestion_audit`:
+Every run writes one row per dataset into `<catalog>.farmia_ops.ingestion_audit`:
 
 ```sql
 SELECT run_id, dataset, source_format, rows_ingested, status,
-       timestampdiff(SECOND, started_at, finished_at) AS segundos
+       timestampdiff(SECOND, started_at, finished_at) AS seconds
 FROM masterob001dbw.farmia_ops.ingestion_audit
 ORDER BY started_at DESC;
 ```
 
-## 6. Ejemplo de ejecución
+## 6. Example run
 
-Ejecución de los diez datasets después de que llegaran ficheros nuevos a landing y mensajes nuevos a los topics.
+All ten datasets, after new files landed and new messages reached the topics.
 
-![Ejecución del motor](docs/capturas/ejecucion-motor.png)
+![Engine run](docs/capturas/ejecucion-motor.png)
 
-**(1)** Suscripción al topic `farmia.app_events` y al patrón `farmia\.sensors\..*`, con el esquema Avro recuperado del Schema Registry.
-**(2)** Ingesta incremental de los ocho datasets de fichero. `field_images` reporta cero porque no llegó ninguna imagen nueva: el resto procesó **solo los ficheros nuevos**, sin reprocesar los de cargas anteriores. Esa es la prueba de que la ingesta es incremental.
-**(3)** Ingesta de los dos datasets de eventos: 300 mensajes JSON y 200 en Avro. Las 200 lecturas de sensores vienen de dos topics distintos, 100 de cada uno, recogidos por el patrón sin nombrarlos.
-**(4)** Auditoría registrada y resumen: diez datasets correctos, 1382 filas, ningún error.
+**(1)** Subscription to the `farmia.app_events` topic and to the `farmia\.sensors\..*` pattern, with the Avro schema pulled from the Schema Registry.
+**(2)** Incremental ingestion of the eight file datasets. `field_images` reports zero because no new image arrived: every other dataset processed **only the new files**, without reprocessing earlier loads. That is the proof that ingestion is incremental.
+**(3)** Ingestion of the two event datasets: 300 JSON messages and 200 in Avro. The 200 sensor readings come from two different topics, 100 each, picked up by the pattern without naming them.
+**(4)** Audit written and summary: ten datasets successful, 1382 rows, no errors.
 
-Desglose de esa ejecución:
+Breakdown of that run:
 
-| Dataset | Origen | Formato | Filas nuevas |
+| Dataset | Source | Format | New rows |
 |---|---|---|---|
-| `product_catalog` | ficheros | parquet | 30 |
-| `inventory` | ficheros | parquet | 180 |
-| `orders_cdc` | ficheros | json | 90 |
-| `sensors` | ficheros | json | 150 |
-| `app_events` | ficheros | json | 300 |
-| `shipments` | ficheros | csv | 100 |
-| `weather` | ficheros | avro | 32 |
-| `field_images` | ficheros | binaryFile | 0 |
+| `product_catalog` | files | parquet | 30 |
+| `inventory` | files | parquet | 180 |
+| `orders_cdc` | files | json | 90 |
+| `sensors` | files | json | 150 |
+| `app_events` | files | json | 300 |
+| `shipments` | files | csv | 100 |
+| `weather` | files | avro | 32 |
+| `field_images` | files | binaryFile | 0 |
 | `app_events_stream` | kafka | json | 300 |
 | `sensors_stream` | kafka | avro | 200 |
 
-### Registro de auditoría
+### Audit record
 
-![Tabla de auditoría](docs/capturas/auditoria.png)
+![Audit table](docs/capturas/auditoria.png)
 
-Dos ejecuciones distintas identificadas por su `run_id`. La de las 10:52 recogió las filas nuevas de cada dataset. La anterior, de las 09:31, devolvió cero en todos porque no había llegado nada nuevo desde la ejecución previa.
+Two separate runs identified by their `run_id`. The 10:52 one picked up the new rows of each dataset. The earlier one, at 09:31, returned zero across the board because nothing new had arrived since the previous run.
 
-## 7. Preparación de los datos de prueba
+## 7. Test data
 
-Los notebooks de apoyo, en orden:
+The supporting notebooks, in order:
 
-| Notebook | Qué hace |
+| Notebook | What it does |
 |---|---|
-| `00_setup_y_datasets_farmia` | Crea los cuatro esquemas y la tabla de auditoría, y genera cinco datasets en landing |
-| `01_datasets_extra_formatos` | Genera los datasets de CSV, Avro e imágenes |
-| `02_liberar_incrementales` | Copia una segunda tanda de ficheros a landing para probar la ingesta incremental |
-| `03_kafka_producer` | Crea los mensajes de los topics, en JSON y en Avro |
+| `00_setup_y_datasets_farmia` | Creates the four schemas and the audit table, and generates five datasets in landing |
+| `01_datasets_extra_formatos` | Generates the CSV, Avro and image datasets |
+| `02_liberar_incrementales` | Copies a second batch of files into landing to exercise incremental ingestion |
+| `03_kafka_producer` | Produces the topic messages, in JSON and in Avro |
 
-Antes de ejecutar `03`, hay que crear los topics en Kafka: `farmia.app_events`, `farmia.sensors.norte` y `farmia.sensors.sur`.
+Before running `03`, the topics have to exist in Kafka: `farmia.app_events`, `farmia.sensors.norte` and `farmia.sensors.sur`.
 
-Las imágenes se escriben a través de un volumen externo de Unity Catalog, porque en cómputo serverless no se puede escribir un fichero binario directamente en una ruta `abfss://` con Python.
+Images are written through a Unity Catalog external volume, because serverless compute cannot write a binary file straight to an `abfss://` path from Python.
 
-## 8. Decisiones técnicas
+## 8. Design decisions
 
-**Structured Streaming para ambos casos.** Tanto Autoloader como Kafka se leen con la misma API. Eso hace que la escritura, los checkpoints, el registro de tablas y la auditoría sean idénticos para lotes y para eventos: el motor tiene dos lectores, no dos mitades.
+**Structured Streaming for both paths.** Autoloader and Kafka are read through the same API, which makes writing, checkpointing, table registration and auditing identical for batch and for events. The engine has two readers, not two halves.
 
-**Un fallo no propaga.** Cada dataset se arranca y se espera de forma independiente. Si uno falla, se registra en el log y en la auditoría, y el resto continúa. En una ingesta nocturna es preferible perder una fuente y saberlo, a perderlas todas por un fichero corrupto.
+**A failure does not propagate.** Each dataset starts and is awaited independently. If one fails it is logged and audited, and the rest carry on. In an overnight ingestion, losing one source and knowing about it beats losing all of them to a single corrupt file.
 
-**El modo de evolución de esquema se deduce.** Autoloader rechaza `addNewColumns` cuando se declara el esquema, y `binaryFile` solo admite `none`. En lugar de obligar a acertarlo en cada JSON, el motor lo deriva de la propia configuración. Se puede forzar con `schema_evolution_mode`.
+**Schema evolution mode is derived.** Autoloader rejects `addNewColumns` when the schema is declared, and `binaryFile` only accepts `none`. Rather than forcing every JSON to get it right, the engine derives it from the configuration itself. It can still be forced with `schema_evolution_mode`.
 
-**Las filas escritas se cuentan desde el historial de Delta.** En cómputo serverless, `query.recentProgress` viene vacío en cuanto la consulta termina. El historial de Delta registra en cada commit cuántas filas se añadieron, y funciona en cualquier runtime.
+**Written rows are counted from the Delta history.** On serverless compute, `query.recentProgress` comes back empty as soon as the query ends. The Delta history records how many rows each commit added, and works on any runtime.
 
-**Registrar la tabla no puede invalidar la ingesta.** El registro en el catálogo ocurre después de escribir y con su propio control de errores: si falla, se avisa, pero el dataset no se marca como fallido, porque los datos ya están escritos.
+**Registering a table cannot invalidate an ingestion.** Catalog registration happens after the write and with its own error handling: if it fails it is logged, but the dataset is not marked as failed, because the data is already written.
 
-**Cabecera Confluent en Avro.** Los mensajes de Confluent llevan cinco bytes delante (un byte de control y cuatro con el identificador del esquema) que hay que descartar antes de decodificar. El motor lo hace al construir la expresión de deserialización.
+**Confluent's Avro wire format.** Confluent messages carry five bytes up front (a magic byte plus four with the schema id) that have to be stripped before decoding. The engine does that when building the deserialization expression.
 
-## Procedencia
+## Background
 
-Trabajo realizado para la asignatura de diseño de ingestas y lagos de datos del Máster en Big Data & Data Engineering de la Universidad Complutense de Madrid.
+Coursework for the data ingestion and data lakes module of the Big Data & Data Engineering master's programme at Universidad Complutense de Madrid.
 
-El escenario de la empresa y los requisitos del motor los planteaba el curso. El diseño de la arquitectura, el motor de ingesta, la configuración de los datasets y la documentación son míos. Los datos son sintéticos: se generan con los notebooks `00` y `01`.
+The company scenario and the engine requirements were set by the course. The architecture design, the ingestion engine, the dataset configuration and the documentation are mine. The data is synthetic: notebooks `00` and `01` generate it.
 
-El diseño completo de la arquitectura está en [`docs/arquitectura.md`](docs/arquitectura.md).
+The full architecture design is in [`docs/arquitectura.md`](docs/arquitectura.md), in Spanish.
