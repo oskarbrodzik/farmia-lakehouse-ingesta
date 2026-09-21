@@ -1,0 +1,3 @@
+# Solo para ejecutar los tests en local. El motor corre sobre Databricks, que
+# ya trae PySpark; los tests no lo necesitan porque cubren la configuración.
+pytest>=7.0

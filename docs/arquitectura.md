@@ -1,7 +1,6 @@
 # Arquitectura del data lakehouse de FarmIA
 
-Diseño de ingestas y lagos de datos
-Máster en Big Data & Data Engineering, Universidad Complutense de Madrid
+Diseño de la ingesta y del lago de datos
 Oskar Brodzik
 
 ---
@@ -230,10 +229,6 @@ Esta tabla es la que permite responder a preguntas de operación (qué se ingiri
 ---
 
 ## Bibliografía
-
-Centeno, J. *Diseño de ingestas y lagos de datos*. Materiales de la asignatura, temas 1 a 7. Máster en Big Data & Data Engineering, Universidad Complutense de Madrid.
-
-Centeno, J. *lakehouses* (repositorio de código de la asignatura). https://github.com/jcenteno-ucm/lakehouses
 
 Databricks. *What is Auto Loader?* https://docs.databricks.com/ingestion/auto-loader/
 

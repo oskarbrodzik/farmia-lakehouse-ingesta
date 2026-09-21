@@ -10,7 +10,6 @@ Uso típico desde un notebook:
 """
 
 from .config import ConfigError, DatasetConfig, EngineConfig, load_dataset_configs
-from .engine import ResultadoIngesta, ejecutar
 
 __all__ = [
     "ConfigError",
@@ -22,3 +21,15 @@ __all__ = [
 ]
 
 __version__ = "1.0.0"
+
+
+def __getattr__(nombre):
+    """Importa el motor solo cuando se usa.
+
+    `engine.py` necesita PySpark, pero la capa de configuración no. Retrasando
+    ese import, la configuración se puede cargar y probar fuera de un cluster.
+    """
+    if nombre in ("ResultadoIngesta", "ejecutar"):
+        from . import engine
+        return getattr(engine, nombre)
+    raise AttributeError(f"el módulo {__name__!r} no tiene el atributo {nombre!r}")

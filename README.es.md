@@ -19,7 +19,8 @@ El diseño de la arquitectura está en [`docs/arquitectura.md`](docs/arquitectur
 5. [Ejecución](#5-ejecución)
 6. [Ejemplo de ejecución](#6-ejemplo-de-ejecución)
 7. [Preparación de los datos de prueba](#7-preparación-de-los-datos-de-prueba)
-8. [Decisiones técnicas](#8-decisiones-técnicas)
+8. [Tests](#8-tests)
+9. [Decisiones técnicas](#9-decisiones-técnicas)
 
 ---
 
@@ -46,6 +47,7 @@ tarea-lakehouse/
 │   ├── 02_liberar_incrementales.py     Simula la llegada de ficheros nuevos
 │   ├── 03_kafka_producer.py            Produce eventos a los topics
 │   └── run_engine.py                   Lanzador del motor
+├── tests/                       Tests de la capa de configuración
 └── docs/
     ├── arquitectura.md          Diseño del lakehouse
     ├── diagrama-arquitectura.png
@@ -381,7 +383,20 @@ Antes de ejecutar `03`, hay que crear los topics en Kafka: `farmia.app_events`, 
 
 Las imágenes se escriben a través de un volumen externo de Unity Catalog, porque en cómputo serverless no se puede escribir un fichero binario directamente en una ruta `abfss://` con Python.
 
-## 8. Decisiones técnicas
+## 8. Tests
+
+La capa de configuración es la parte del motor que se puede comprobar sin cluster, y en la que un fallo llega más lejos: un dataset mal validado no se descubre hasta que la ingesta va por la mitad. Es lo que cubren los tests.
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+27 tests, sin Spark y sin nube, en bastante menos de un segundo: valores por defecto y campos obligatorios, las rutas `abfss://` que construye el motor, la expansión de `{landing}` y `{lakehouse}` en las rutas de los datasets, todas las ramas de validación de un dataset (formatos no soportados, un origen Kafka sin topic, un tipo de origen desconocido, una capa distinta de bronze), la carga de un directorio de configuraciones con su orden y su filtro, y la traducción del `client.properties` de Confluent a las opciones que espera el conector de Spark.
+
+Importar la configuración no arrastra PySpark: `engine.py` se importa de forma diferida, así que los tests corren sobre un Python normal.
+
+## 9. Decisiones técnicas
 
 **Structured Streaming para ambos casos.** Tanto Autoloader como Kafka se leen con la misma API. Eso hace que la escritura, los checkpoints, el registro de tablas y la auditoría sean idénticos para lotes y para eventos: el motor tiene dos lectores, no dos mitades.
 
@@ -395,10 +410,10 @@ Las imágenes se escriben a través de un volumen externo de Unity Catalog, porq
 
 **Cabecera Confluent en Avro.** Los mensajes de Confluent llevan cinco bytes delante (un byte de control y cuatro con el identificador del esquema) que hay que descartar antes de decodificar. El motor lo hace al construir la expresión de deserialización.
 
-## Procedencia
+## Sobre el proyecto
 
-Trabajo realizado para la asignatura de diseño de ingestas y lagos de datos del Máster en Big Data & Data Engineering de la Universidad Complutense de Madrid.
+FarmIA es una empresa ficticia y el escenario está inventado: una distribuidora de productos agrícolas que prevé triplicar su volumen de datos en dos años, con seis fuentes que no se parecen entre sí. Todos los datos son sintéticos y los generan los notebooks `00` y `01`.
 
-El escenario de la empresa y los requisitos del motor los planteaba el curso. El diseño de la arquitectura, el motor de ingesta, la configuración de los datasets y la documentación son míos. Los datos son sintéticos: se generan con los notebooks `00` y `01`.
+El diseño de la arquitectura, el motor de ingesta, la configuración de los datasets, los tests y la documentación son míos.
 
 El diseño completo de la arquitectura está en [`docs/arquitectura.md`](docs/arquitectura.md).
